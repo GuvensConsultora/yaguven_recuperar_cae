@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_account_journal_form_recuperar_cae" model="ir.ui.view">
+        <field name="name">account.journal.form.recuperar.cae</field>
+        <field name="model">account.journal</field>
+        <field name="inherit_id" ref="account.view_account_journal_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button name="action_recuperar_cae_escanear" type="object"
+                        string="Recuperar CAE de AFIP"
+                        class="oe_stat_button"
+                        icon="fa-refresh"
+                        invisible="not l10n_ar_afip_ws"
+                        groups="account.group_account_manager"/>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

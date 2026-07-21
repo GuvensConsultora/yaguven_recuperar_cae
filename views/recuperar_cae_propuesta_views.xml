@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_recuperar_cae_propuesta_tree" model="ir.ui.view">
+        <field name="name">yaguven.recuperar_cae.propuesta.tree</field>
+        <field name="model">yaguven.recuperar_cae.propuesta</field>
+        <field name="arch" type="xml">
+            <tree string="Propuestas de recuperación de CAE"
+                  decoration-success="estado == 'aplicada'"
+                  decoration-warning="estado in ('pendiente', 'revision_manual')"
+                  decoration-danger="estado == 'error'">
+                <field name="create_date" string="Detectado"/>
+                <field name="journal_id"/>
+                <field name="l10n_latam_document_type_id"/>
+                <field name="numero_afip"/>
+                <field name="importe_total" widget="monetary"/>
+                <field name="move_fantasma_id"/>
+                <field name="move_origen_id"/>
+                <field name="estado"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_recuperar_cae_propuesta_form" model="ir.ui.view">
+        <field name="name">yaguven.recuperar_cae.propuesta.form</field>
+        <field name="model">yaguven.recuperar_cae.propuesta</field>
+        <field name="arch" type="xml">
+            <form string="Propuesta de recuperación de CAE">
+                <header>
+                    <button name="action_confirmar" type="object"
+                            string="Confirmar y postear"
+                            class="oe_highlight"
+                            invisible="estado != 'pendiente'"
+                            confirm="¿Confirmar? Se va a completar el borrador con el número y CAE de AFIP y se va a postear."
+                            groups="account.group_account_manager"/>
+                    <field name="estado" widget="badge"
+                           decoration-success="estado == 'aplicada'"
+                           decoration-warning="estado in ('pendiente', 'revision_manual')"
+                           decoration-danger="estado == 'error'"/>
+                </header>
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="journal_id" readonly="1"/>
+                            <field name="l10n_latam_document_type_id" readonly="1"/>
+                            <field name="numero_afip" readonly="1"/>
+                            <field name="cae" readonly="1"/>
+                            <field name="cae_vencimiento" readonly="1"/>
+                            <field name="fecha_afip" readonly="1"/>
+                            <field name="importe_total" readonly="1"/>
+                        </group>
+                        <group>
+                            <field name="move_fantasma_id" readonly="1"/>
+                            <field name="move_origen_id" readonly="1"/>
+                            <field name="company_id" readonly="1" groups="base.group_multi_company"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Explicación">
+                            <field name="mensaje" readonly="1"/>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_recuperar_cae_propuesta" model="ir.actions.act_window">
+        <field name="name">Propuestas de recuperación de CAE</field>
+        <field name="res_model">yaguven.recuperar_cae.propuesta</field>
+        <field name="view_mode">tree,form</field>
+    </record>
+
+    <menuitem id="menu_recuperar_cae_propuesta"
+              name="Recuperar CAE de AFIP"
+              parent="account_accountant.menu_accounting"
+              action="action_recuperar_cae_propuesta"
+              groups="account.group_account_manager"
+              sequence="90"/>
+
+</odoo>
