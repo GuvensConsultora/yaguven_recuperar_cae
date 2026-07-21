@@ -2,10 +2,10 @@
 <odoo>
 
     <record id="view_recuperar_cae_propuesta_tree" model="ir.ui.view">
-        <field name="name">yaguven.recuperar_cae.propuesta.tree</field>
+        <field name="name">yaguven.recuperar_cae.propuesta.list</field>
         <field name="model">yaguven.recuperar_cae.propuesta</field>
         <field name="arch" type="xml">
-            <tree string="Propuestas de recuperación de CAE"
+            <list string="Propuestas de recuperación de CAE"
                   decoration-success="estado == 'aplicada'"
                   decoration-warning="estado in ('pendiente', 'revision_manual')"
                   decoration-danger="estado == 'error'">
@@ -17,7 +17,7 @@
                 <field name="move_fantasma_id"/>
                 <field name="move_origen_id"/>
                 <field name="estado"/>
-            </tree>
+            </list>
         </field>
     </record>
 
@@ -68,7 +68,7 @@
     <record id="action_recuperar_cae_propuesta" model="ir.actions.act_window">
         <field name="name">Propuestas de recuperación de CAE</field>
         <field name="res_model">yaguven.recuperar_cae.propuesta</field>
-        <field name="view_mode">tree,form</field>
+        <field name="view_mode">list,form</field>
     </record>
 
     <menuitem id="menu_recuperar_cae_propuesta"

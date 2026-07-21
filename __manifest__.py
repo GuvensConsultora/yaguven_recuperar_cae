@@ -1,6 +1,6 @@
 {
     'name': 'Yagüven — Recuperar CAE de AFIP (comprobantes fantasma)',
-    'version': '17.0.1.0.0',
+    'version': '19.0.1.0.0',
     'category': 'Accounting/Localizations/Argentina',
     'summary': 'Detecta y recupera comprobantes autorizados por AFIP que no se guardaron '
                'en Odoo (timeout del WSFE), destrabando la numeración del punto de venta.',
