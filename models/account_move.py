@@ -29,17 +29,18 @@ class AccountMove(models.Model):
         try:
             return super()._post(soft=soft)
         except Exception:
-            if not self._yaguven_recuperar_cae():
+            resueltos = self._yaguven_recuperar_cae()
+            if not resueltos:
                 raise
-            # El fantasma quedó resuelto y commiteado aparte, así que la numeración ya está
-            # alineada. Se limpia la caché porque ese arreglo pasó fuera de esta transacción.
-            self.env.invalidate_all()
-            pendientes = self.filtered(lambda m: m.state == 'draft')
+            # Cuáles se resolvieron lo dice la recuperación, NO el estado leído de la base: Odoo
+            # abre sus transacciones en REPEATABLE READ, así que lo que la recuperación commiteó en
+            # su propia transacción es invisible desde ésta — `invalidate_all()` relee contra la
+            # misma foto y sigue viendo «borrador». Filtrar por estado hacía que el reintento
+            # agarrara un comprobante ya posteado y la operación terminara bien pero con error.
+            pendientes = self - self.browse(resueltos)
             if not pendientes:
-                # El fantasma ERA este mismo comprobante: la recuperación ya lo posteó con su
-                # número y su CAE. Reintentar acá lo haría fallar por estar posteado, y el cajero
-                # vería un error con la venta ya resuelta.
                 return self
+            self.env.invalidate_all()
             return super(AccountMove, pendientes.with_context(**{SALTAR: True}))._post(soft=soft)
 
     # ------------------------------------------------------------------
@@ -47,7 +48,8 @@ class AccountMove(models.Model):
     def _yaguven_recuperar_cae(self):
         """Resuelve el comprobante fantasma en una transacción aparte.
 
-        Devuelve True sólo si algo quedó resuelto y vale la pena reintentar el posteo. El trabajo va
+        Devuelve los ids de los comprobantes de ESTE recordset que quedaron resueltos y posteados
+        por la recuperación, para que el que llama no los reintente. El trabajo va
         en un cursor nuevo por dos razones: consultar a ARCA commitea, y lo que anotemos tiene que
         sobrevivir al rollback de la excepción que estamos por volver a levantar.
         """
@@ -59,10 +61,10 @@ class AccountMove(models.Model):
             and m.l10n_latam_document_type_id
         ]
         if not candidatos:
-            return False
+            return []
 
         datos = [(m.journal_id.id, m.l10n_latam_document_type_id.id, m.id) for m in candidatos]
-        resuelto = False
+        resueltos = []
         try:
             with self.env.registry.cursor() as cr:
                 env = api.Environment(cr, SUPERUSER_ID, {
@@ -81,11 +83,12 @@ class AccountMove(models.Model):
                             'Recuperar CAE: falló la consulta a ARCA para el diario %s', journal_id)
                         continue
                     for propuesta in propuestas.sorted('numero_afip'):
+                        arreglado = propuesta.move_fantasma_id.id
                         if propuesta._aplicar_automatica():
-                            resuelto = True
+                            resueltos.append(arreglado)
                 # El `with` commitea al salir: las propuestas y el fantasma arreglado quedan, pase
                 # lo que pase con la transacción de afuera.
         except Exception:
             _logger.exception('Recuperar CAE: falló la recuperación en transacción aparte')
-            return False
-        return resuelto
+            return []
+        return resueltos
