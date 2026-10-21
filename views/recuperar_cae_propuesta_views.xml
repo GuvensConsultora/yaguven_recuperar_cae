@@ -73,7 +73,7 @@
 
     <menuitem id="menu_recuperar_cae_propuesta"
               name="Recuperar CAE de AFIP"
-              parent="account_accountant.menu_accounting"
+              parent="account.menu_finance"
               action="action_recuperar_cae_propuesta"
               groups="account.group_account_manager"
               sequence="90"/>
