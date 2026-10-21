@@ -34,7 +34,13 @@ class AccountMove(models.Model):
             # El fantasma quedó resuelto y commiteado aparte, así que la numeración ya está
             # alineada. Se limpia la caché porque ese arreglo pasó fuera de esta transacción.
             self.env.invalidate_all()
-            return super(AccountMove, self.with_context(**{SALTAR: True}))._post(soft=soft)
+            pendientes = self.filtered(lambda m: m.state == 'draft')
+            if not pendientes:
+                # El fantasma ERA este mismo comprobante: la recuperación ya lo posteó con su
+                # número y su CAE. Reintentar acá lo haría fallar por estar posteado, y el cajero
+                # vería un error con la venta ya resuelta.
+                return self
+            return super(AccountMove, pendientes.with_context(**{SALTAR: True}))._post(soft=soft)
 
     # ------------------------------------------------------------------
 
