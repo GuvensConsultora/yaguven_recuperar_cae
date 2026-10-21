@@ -38,10 +38,11 @@ class RecuperarCaePropuesta(models.Model):
     ], default='pendiente', required=True, readonly=True)
     mensaje = fields.Html('Explicación', readonly=True)
 
-    _sql_constraints = [
-        ('gap_unico', 'unique(journal_id, l10n_latam_document_type_id, numero_afip)',
-         'Ya existe una propuesta para este comprobante.'),
-    ]
+    # `_sql_constraints` se ignora desde la 19, así que la unicidad no existía en la base:
+    # en la 20 la restricción se declara como atributo del modelo.
+    _gap_unico = models.Constraint(
+        'unique (journal_id, l10n_latam_document_type_id, numero_afip)',
+        'Ya existe una propuesta para este comprobante.')
 
     # ------------------------------------------------------------------
     # Escaneo / detección
@@ -52,12 +53,14 @@ class RecuperarCaePropuesta(models.Model):
         """Compara AFIP vs Odoo para el/los tipo(s) de comprobante del journal.
         Reutiliza propuestas pendientes existentes en vez de duplicarlas."""
         if not doc_types:
-            grouped = self.env['account.move'].read_group(
+            # En la 20 `read_group` exige método de agregación; `_read_group` devuelve el
+            # recordset agrupado como primer elemento de cada tupla.
+            grouped = self.env['account.move']._read_group(
                 [('journal_id', '=', journal.id), ('state', '=', 'posted'),
                  ('l10n_latam_document_type_id', '!=', False)],
-                ['l10n_latam_document_type_id'], ['l10n_latam_document_type_id'])
-            doc_type_ids = [g['l10n_latam_document_type_id'][0] for g in grouped]
-            doc_types = self.env['l10n_latam.document.type'].browse(doc_type_ids)
+                ['l10n_latam_document_type_id'])
+            doc_types = self.env['l10n_latam.document.type'].browse(
+                [doc_type.id for (doc_type,) in grouped])
 
         propuestas = self.browse()
         for doc_type in doc_types:
