@@ -2,7 +2,7 @@ import logging
 
 from markupsafe import Markup
 
-from odoo import SUPERUSER_ID, api, fields, models
+from odoo import api, fields, models
 from odoo.exceptions import UserError
 from odoo.tools.misc import html_escape
 
@@ -280,39 +280,3 @@ class RecuperarCaePropuesta(models.Model):
         )
 
         self.write({'estado': 'aplicada', 'automatica': automatica})
-
-    def _dejar_para_revision(self, original):
-        """Anota la propuesta en una transacción aparte.
-
-        Hace falta porque el posteo que la disparó va a volver a levantar su excepción y el
-        framework deshace la transacción en curso: sin esto la propuesta se perdería. Se usa un
-        cursor nuevo en vez de commitear el actual, porque en el punto de venta el actual tiene
-        una sincronización de pedido a medio hacer.
-        """
-        self.ensure_one()
-        datos = {
-            'company_id': self.company_id.id,
-            'journal_id': self.journal_id.id,
-            'l10n_latam_document_type_id': self.l10n_latam_document_type_id.id,
-            'numero_afip': self.numero_afip,
-            'cae': self.cae,
-            'cae_vencimiento': self.cae_vencimiento,
-            'fecha_afip': self.fecha_afip,
-            'importe_total': self.importe_total,
-            'candidatos': self.candidatos,
-            'estado': self.estado,
-            'mensaje': self.mensaje,
-        }
-        try:
-            with self.env.registry.cursor() as cr:
-                env = api.Environment(cr, SUPERUSER_ID, {})
-                modelo = env[self._name]
-                if not modelo.search_count([
-                        ('journal_id', '=', self.journal_id.id),
-                        ('l10n_latam_document_type_id', '=', self.l10n_latam_document_type_id.id),
-                        ('numero_afip', '=', self.numero_afip)]):
-                    modelo.create(datos)
-        except Exception:
-            _logger.exception(
-                'Recuperar CAE: no se pudo anotar la propuesta del comprobante %s-%s',
-                self.journal_id.l10n_ar_afip_pos_number, self.numero_afip)

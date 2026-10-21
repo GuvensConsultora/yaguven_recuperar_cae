@@ -1,6 +1,6 @@
 {
     'name': 'Yagüven — Recuperar CAE de AFIP (comprobantes fantasma)',
-    'version': '20.0.2.0.0',
+    'version': '20.0.3.0.0',
     'category': 'Accounting/Localizations/Argentina',
     'summary': 'Detecta y recupera comprobantes autorizados por AFIP que no se guardaron '
                'en Odoo (timeout del WSFE), destrabando la numeración del punto de venta.',
@@ -25,6 +25,10 @@ la numeración local quedó un paso atrás.
   chatter, con cuáles eran los otros, para poder controlarlo después.
 - Si no hay NINGÚN borrador con ese importe no se puede resolver solo —no existe a qué
   ponerle el CAE— y queda anotado para revisión.
+- La recuperación corre en una TRANSACCIÓN APARTE, y el posteo no se envuelve en ningún
+  savepoint: `l10n_ar_edi` hace `commit()` adentro del posteo para guardar el ticket de
+  acceso de ARCA, y con un savepoint abierto eso aborta con «Pending savepoints not
+  released» — dejando sin postear a TODA factura electrónica.
 - Wizard manual desde el journal para escanear bajo demanda, sin esperar a que falle un
   posteo.
 """,
