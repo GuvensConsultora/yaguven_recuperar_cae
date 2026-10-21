@@ -1,26 +1,48 @@
 import logging
 
-from markupsafe import Markup
-
 from odoo import models
+from odoo.exceptions import UserError
 
 _logger = logging.getLogger(__name__)
+
+SALTAR = 'yaguven_recuperar_cae_saltar'
 
 
 class AccountMove(models.Model):
     _inherit = 'account.move'
 
-    def action_post(self):
+    def _post(self, soft=True):
+        """El enganche va en `_post` y no en `action_post` porque el punto de venta postea
+        la factura del ticket llamando a `_post()` directo (`pos.order._generate_pos_order_invoice`),
+        mientras que `action_post()` termina llamando a `_post(soft=False)`. Un solo override
+        cubre las dos puntas; en `action_post` el POS quedaba afuera.
+        """
+        if self.env.context.get(SALTAR):
+            return super()._post(soft=soft)
         try:
             with self.env.cr.savepoint():
-                return super().action_post()
-        except Exception:
-            self._yaguven_intentar_recuperar_cae()
-            raise
+                return super()._post(soft=soft)
+        except Exception as original:
+            # El savepoint ya deshizo lo del posteo fallido, así que la transacción sigue usable.
+            arreglados = self._yaguven_recuperar_cae(original)
+            if not arreglados:
+                raise
+            # Reintento: el fantasma ya tiene su número y CAE, así que la numeración quedó
+            # alineada y este comprobante puede pedir el suyo.
+            return super(AccountMove, self.with_context(**{SALTAR: True}))._post(soft=soft)
 
-    def _yaguven_intentar_recuperar_cae(self):
-        """Best-effort: nunca debe tapar la excepción original del posteo fallido."""
+    # ------------------------------------------------------------------
+
+    def _yaguven_recuperar_cae(self, original):
+        """Intenta destrabar la numeración sin intervención humana.
+
+        Devuelve True sólo si el fantasma quedó resuelto y vale la pena reintentar el posteo.
+        Si el apareo no es único, deja la propuesta anotada para revisión y devuelve False:
+        aplicar a ciegas significaría ponerle el CAE de ARCA a un comprobante que no es el que
+        ARCA autorizó, y eso no se corrige después.
+        """
         propuesta_model = self.env['yaguven.recuperar_cae.propuesta'].sudo()
+        resuelto = False
         for move in self:
             journal = move.journal_id
             if move.state != 'draft':
@@ -32,25 +54,16 @@ class AccountMove(models.Model):
             try:
                 propuestas = propuesta_model._escanear_journal(
                     journal, doc_types=move.l10n_latam_document_type_id, move_origen=move)
-                if not propuestas:
-                    continue
-                note = Markup(''.join(
-                    p.mensaje or '' for p in propuestas.sorted('numero_afip')))
-                move.sudo().activity_schedule(
-                    'mail.mail_activity_data_todo',
-                    summary='Comprobante fantasma detectado — revisar propuesta de '
-                            'recuperación de CAE',
-                    note=note,
-                    user_id=self.env.user.id,
-                )
             except Exception:
                 _logger.exception(
-                    'Recuperar CAE: fallo la detección automática para journal %s (move %s)',
+                    'Recuperar CAE: falló la consulta a AFIP para el diario %s (comprobante %s)',
                     journal.id, move.id)
                 continue
-            else:
-                # El posteo que disparó esto ya hizo rollback dentro del savepoint de
-                # action_post; comiteamos acá aparte para que la propuesta y la actividad
-                # sobrevivan al rollback que el framework hace sobre la excepción original
-                # al volver a levantarla más abajo.
-                self.env.cr.commit()
+            if not propuestas:
+                continue
+            for propuesta in propuestas.sorted('numero_afip'):
+                if propuesta._aplicar_automatica():
+                    resuelto = True
+                else:
+                    propuesta._dejar_para_revision(original)
+        return resuelto

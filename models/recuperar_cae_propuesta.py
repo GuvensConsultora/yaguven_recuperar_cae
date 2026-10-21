@@ -2,7 +2,7 @@ import logging
 
 from markupsafe import Markup
 
-from odoo import api, fields, models
+from odoo import SUPERUSER_ID, api, fields, models
 from odoo.exceptions import UserError
 from odoo.tools.misc import html_escape
 
@@ -30,9 +30,14 @@ class RecuperarCaePropuesta(models.Model):
         'account.move', string='Borrador que coincide (fantasma)', readonly=True)
     move_origen_id = fields.Many2one(
         'account.move', string='Factura que disparó la detección', readonly=True)
+    candidatos = fields.Integer(
+        'Borradores con ese importe', readonly=True,
+        help='Cuántos borradores coincidían. Más de uno significa que la elección fue por '
+             'fecha y hay que controlarla.')
+    automatica = fields.Boolean('Resuelta sin intervención', readonly=True)
     estado = fields.Selection([
         ('pendiente', 'Pendiente de confirmar'),
-        ('revision_manual', 'Revisión manual (sin match único)'),
+        ('revision_manual', 'Revisión manual (sin ningún borrador que coincida)'),
         ('aplicada', 'Aplicada'),
         ('error', 'Error al aplicar'),
     ], default='pendiente', required=True, readonly=True)
@@ -113,13 +118,15 @@ class RecuperarCaePropuesta(models.Model):
         data = resp['ResultGet']
         importe = float(data['ImpTotal'])
 
+        # El más reciente primero: cuando hay varios con el mismo importe, es el que se aplica
+        # (indicación del usuario 20/10 — en la caja no hay a quién consultar).
         candidatos = self.env['account.move'].search([
             ('journal_id', '=', journal.id),
             ('l10n_latam_document_type_id', '=', doc_type.id),
             ('state', '=', 'draft'),
             ('amount_total', '>=', importe - AMOUNT_TOLERANCE),
             ('amount_total', '<=', importe + AMOUNT_TOLERANCE),
-        ])
+        ], order='invoice_date desc, id desc')
 
         vals = {
             'company_id': company.id,
@@ -131,15 +138,16 @@ class RecuperarCaePropuesta(models.Model):
             'fecha_afip': self._afip_fecha(data['CbteFch']),
             'importe_total': importe,
             'move_origen_id': move_origen.id if move_origen else False,
+            'candidatos': len(candidatos),
         }
 
-        if len(candidatos) == 1:
-            vals['move_fantasma_id'] = candidatos.id
+        if candidatos:
+            vals['move_fantasma_id'] = candidatos[0].id
             vals['estado'] = 'pendiente'
             vals['mensaje'] = self._mensaje_pendiente(journal, numero, data, candidatos)
         else:
             vals['estado'] = 'revision_manual'
-            vals['mensaje'] = self._mensaje_revision(journal, numero, data, candidatos)
+            vals['mensaje'] = self._mensaje_revision(journal, numero, data)
 
         return self.create(vals)
 
@@ -159,108 +167,152 @@ class RecuperarCaePropuesta(models.Model):
         return f'{journal.l10n_ar_afip_pos_number:05d}-{numero:08d}'
 
     @api.model
-    def _mensaje_pendiente(self, journal, numero, data, move):
+    def _mensaje_pendiente(self, journal, numero, data, candidatos):
         num_fmt = self._numero_fmt(journal, numero)
+        move = candidatos[0]
         partes = [
             f'<p>AFIP ya autorizó el comprobante <strong>{html_escape(num_fmt)}</strong> '
             f'el {html_escape(self._afip_fecha(data["CbteFch"]))}, pero no se guardó en '
             f'Odoo (se cortó la conexión) — por eso quedó trabada la facturación de '
             f'{html_escape(journal.name)}.</p>',
-            f'<p>Encontramos que corresponde al borrador de '
+            f'<p>Corresponde al borrador de '
             f'<strong>${html_escape(f"{move.amount_total:,.2f}")}</strong> '
             f'({html_escape(move.partner_id.name or "")}).</p>',
-            '<p>Al confirmar: se completa ese borrador con el número y CAE reales y se '
-            'postea — no se le vuelve a pedir autorización a AFIP.</p>',
-            f'<p>CAE de AFIP para verificar: {html_escape(data["CodAutorizacion"])}</p>',
         ]
+        if len(candidatos) > 1:
+            otros = ', '.join(
+                f'{c.partner_id.name or "sin contacto"} ({c.invoice_date or "sin fecha"})'
+                for c in candidatos[1:]
+            )
+            partes.append(
+                f'<p><strong>Atención:</strong> había {len(candidatos)} borradores con el '
+                f'mismo importe y se tomó el más reciente. Los otros eran: '
+                f'{html_escape(otros)}. Conviene controlarlo.</p>'
+            )
+        partes.append(
+            f'<p>CAE de AFIP para verificar: {html_escape(data["CodAutorizacion"])}</p>')
         return Markup(''.join(partes))
 
     @api.model
-    def _mensaje_revision(self, journal, numero, data, candidatos):
+    def _mensaje_revision(self, journal, numero, data):
         num_fmt = self._numero_fmt(journal, numero)
         importe_fmt = f'{float(data["ImpTotal"]):,.2f}'
-        if not candidatos:
-            detalle = 'no encontramos ningún borrador con ese importe'
-        else:
-            detalle = (
-                f'encontramos {len(candidatos)} borradores con el mismo importe, no se '
-                'puede determinar cuál es sin revisión manual'
-            )
-        partes = [
+        return Markup(
             f'<p>AFIP ya autorizó el comprobante <strong>{html_escape(num_fmt)}</strong> '
-            f'por <strong>${html_escape(importe_fmt)}</strong>, pero no se guardó en '
-            f'Odoo.</p>',
-            f'<p>No lo pudimos matchear solos: {html_escape(detalle)}. Requiere '
-            'revisión manual antes de aplicar.</p>',
-        ]
-        return Markup(''.join(partes))
+            f'por <strong>${html_escape(importe_fmt)}</strong>, pero no se guardó en Odoo y '
+            f'<strong>no hay ningún borrador con ese importe</strong> al que corresponda.</p>'
+            f'<p>No se puede resolver solo: habría que decidir a mano a qué comprobante '
+            f'pertenece ese número. Hasta entonces la facturación de '
+            f'{html_escape(journal.name)} sigue trabada.</p>'
+        )
 
     # ------------------------------------------------------------------
     # Aplicación
     # ------------------------------------------------------------------
 
+    def _aplicar_automatica(self):
+        """Aplica sin intervención. Devuelve False si no hay a qué aplicarlo."""
+        self.ensure_one()
+        if self.estado != 'pendiente' or not self.move_fantasma_id:
+            return False
+        move = self.move_fantasma_id
+        # B.14: el borrador pudo cambiar entre la detección y esto.
+        if move.state != 'draft' or move.l10n_ar_afip_auth_code:
+            return False
+        try:
+            self._aplicar(automatica=True)
+        except Exception:
+            _logger.exception('Recuperar CAE: falló la aplicación automática de la propuesta %s',
+                              self.id)
+            return False
+        return True
+
     def action_confirmar(self):
         self.ensure_one()
         if self.estado != 'pendiente':
             raise UserError('Esta propuesta no está pendiente de confirmación.')
-
         move = self.move_fantasma_id
-        # B.14: re-verificar en vivo antes de tocar nada — pudo cambiar desde la detección.
         if move.state != 'draft' or move.l10n_ar_afip_auth_code:
             raise UserError(
                 'El borrador cambió de estado desde que se detectó esta propuesta — '
                 'revisar a mano antes de reintentar.')
+        self._aplicar(automatica=False)
 
+    def _aplicar(self, automatica):
+        """Completa el fantasma con su número y CAE reales y lo postea.
+
+        No se le vuelve a pedir autorización a AFIP: el comprobante ya está autorizado, lo que
+        falta es guardarlo. El posteo va con el flag que saltea nuestro propio enganche, para
+        no reentrar en la detección.
+        """
+        self.ensure_one()
+        move = self.move_fantasma_id
         num_fmt = self._numero_fmt(self.journal_id, self.numero_afip)
         move.write({
             'l10n_latam_document_number': num_fmt,
             'l10n_ar_afip_auth_code': self.cae,
             'l10n_ar_afip_auth_code_due': self.cae_vencimiento,
             'invoice_date': self.fecha_afip,
-        })
-        move.write({
             'l10n_ar_afip_auth_mode': 'CAE',
             'l10n_ar_afip_result': 'A',
         })
 
         try:
-            move.action_post()
+            move.with_context(yaguven_recuperar_cae_saltar=True)._post(soft=False)
         except Exception:
             _logger.exception('Error al postear el comprobante recuperado %s', move.id)
             self.estado = 'error'
-            raise UserError(
-                'El CAE se escribió pero el posteo del comprobante recuperado falló — '
-                'revisar el registro a mano.')
+            raise
 
+        modo = ('sin intervención, al quedar trabada la facturación'
+                if automatica else 'confirmado a mano')
+        aviso = ''
+        if self.candidatos > 1:
+            aviso = (f' Había {self.candidatos} borradores con el mismo importe y se tomó el '
+                     f'más reciente: conviene controlar que sea el correcto.')
         move.message_post(
-            body=Markup(
-                f'<p>CAE recuperado automáticamente (Yagüven — Recuperar CAE de AFIP). '
-                f'Comprobante {html_escape(num_fmt)}, CAE {html_escape(self.cae)}.</p>'),
+            body=Markup('<p>%s</p>') % (
+                f'CAE recuperado de AFIP ({modo}). Comprobante {num_fmt}, CAE {self.cae}. '
+                f'No se pidió una autorización nueva: ésta ya estaba otorgada por AFIP.{aviso}'),
             subject='CAE recuperado',
             message_type='comment',
             subtype_xmlid='mail.mt_note',
         )
 
-        resultado_origen = ''
-        origen = self.move_origen_id
-        if origen and origen != move and origen.state == 'draft':
-            try:
-                origen.action_post()
-                resultado_origen = (
-                    f'<p>Tu factura (${html_escape(f"{origen.amount_total:,.2f}")}) '
-                    f'también quedó posteada, como '
-                    f'{html_escape(origen.l10n_latam_document_number or "")}.</p>'
-                )
-            except Exception:
-                _logger.exception(
-                    'CAE recuperado pero no se pudo reintentar el posteo original %s',
-                    origen.id)
-                resultado_origen = (
-                    '<p>El fantasma se corrigió, pero tu factura original todavía no '
-                    'pudo postearse — probá de nuevo desde la factura.</p>'
-                )
+        self.write({'estado': 'aplicada', 'automatica': automatica})
 
-        self.write({
-            'estado': 'aplicada',
-            'mensaje': Markup((self.mensaje or '') + resultado_origen),
-        })
+    def _dejar_para_revision(self, original):
+        """Anota la propuesta en una transacción aparte.
+
+        Hace falta porque el posteo que la disparó va a volver a levantar su excepción y el
+        framework deshace la transacción en curso: sin esto la propuesta se perdería. Se usa un
+        cursor nuevo en vez de commitear el actual, porque en el punto de venta el actual tiene
+        una sincronización de pedido a medio hacer.
+        """
+        self.ensure_one()
+        datos = {
+            'company_id': self.company_id.id,
+            'journal_id': self.journal_id.id,
+            'l10n_latam_document_type_id': self.l10n_latam_document_type_id.id,
+            'numero_afip': self.numero_afip,
+            'cae': self.cae,
+            'cae_vencimiento': self.cae_vencimiento,
+            'fecha_afip': self.fecha_afip,
+            'importe_total': self.importe_total,
+            'candidatos': self.candidatos,
+            'estado': self.estado,
+            'mensaje': self.mensaje,
+        }
+        try:
+            with self.env.registry.cursor() as cr:
+                env = api.Environment(cr, SUPERUSER_ID, {})
+                modelo = env[self._name]
+                if not modelo.search_count([
+                        ('journal_id', '=', self.journal_id.id),
+                        ('l10n_latam_document_type_id', '=', self.l10n_latam_document_type_id.id),
+                        ('numero_afip', '=', self.numero_afip)]):
+                    modelo.create(datos)
+        except Exception:
+            _logger.exception(
+                'Recuperar CAE: no se pudo anotar la propuesta del comprobante %s-%s',
+                self.journal_id.l10n_ar_afip_pos_number, self.numero_afip)

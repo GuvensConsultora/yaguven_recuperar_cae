@@ -1,6 +1,6 @@
 {
     'name': 'Yagüven — Recuperar CAE de AFIP (comprobantes fantasma)',
-    'version': '20.0.1.0.0',
+    'version': '20.0.2.0.0',
     'category': 'Accounting/Localizations/Argentina',
     'summary': 'Detecta y recupera comprobantes autorizados por AFIP que no se guardaron '
                'en Odoo (timeout del WSFE), destrabando la numeración del punto de venta.',
@@ -14,12 +14,17 @@ la numeración local quedó un paso atrás.
 
 - Detección automática: si un posteo falla por desalineación de numeración AFIP, se
   compara el último autorizado en AFIP contra el último posteado en Odoo, se consulta el
-  comprobante faltante y se matchea contra los borradores del journal por importe/fecha.
-- Cada coincidencia se deja como propuesta pendiente de confirmación (nunca se aplica
-  sola) con una explicación en criollo y el dato de AFIP para verificar.
-- Al confirmar: se completa el comprobante fantasma con su número y CAE reales (sin
-  volver a pedir autorización a AFIP) y se reintenta el posteo de la factura que había
-  disparado la detección.
+  comprobante faltante y se matchea contra los borradores del journal por importe.
+- **Se resuelve sin intervención**: completa el comprobante fantasma con su número y CAE
+  reales (sin volver a pedir autorización a AFIP), lo postea y reintenta el posteo que
+  había quedado trabado. El enganche está en `_post`, así que cubre tanto la factura que
+  carga contabilidad como la del ticket de caja, que el punto de venta postea por su
+  cuenta. Es un circuito de venta: nadie puede quedarse esperando a que otra persona lo
+  destrabe.
+- Si hay varios borradores con el mismo importe toma el más reciente y lo deja dicho en el
+  chatter, con cuáles eran los otros, para poder controlarlo después.
+- Si no hay NINGÚN borrador con ese importe no se puede resolver solo —no existe a qué
+  ponerle el CAE— y queda anotado para revisión.
 - Wizard manual desde el journal para escanear bajo demanda, sin esperar a que falle un
   posteo.
 """,

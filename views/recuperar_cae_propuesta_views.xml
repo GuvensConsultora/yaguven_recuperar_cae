@@ -5,10 +5,12 @@
         <field name="name">yaguven.recuperar_cae.propuesta.list</field>
         <field name="model">yaguven.recuperar_cae.propuesta</field>
         <field name="arch" type="xml">
+            <!-- Sin el par verde/rojo: azul para lo resuelto, naranja para lo que pide atención,
+                 negrita para lo que está esperando, y el estado siempre escrito en su columna. -->
             <list string="Propuestas de recuperación de CAE"
-                  decoration-success="estado == 'aplicada'"
-                  decoration-warning="estado in ('pendiente', 'revision_manual')"
-                  decoration-danger="estado == 'error'">
+                  decoration-info="estado == 'aplicada'"
+                  decoration-bf="estado == 'pendiente'"
+                  decoration-warning="estado in ('revision_manual', 'error')">
                 <field name="create_date" string="Detectado"/>
                 <field name="journal_id"/>
                 <field name="l10n_latam_document_type_id"/>
@@ -16,6 +18,8 @@
                 <field name="importe_total" widget="monetary"/>
                 <field name="move_fantasma_id"/>
                 <field name="move_origen_id"/>
+                <field name="candidatos" string="Borradores con ese importe"/>
+                <field name="automatica" string="Sin intervención"/>
                 <field name="estado"/>
             </list>
         </field>
@@ -34,9 +38,9 @@
                             confirm="¿Confirmar? Se va a completar el borrador con el número y CAE de AFIP y se va a postear."
                             groups="account.group_account_manager"/>
                     <field name="estado" widget="badge"
-                           decoration-success="estado == 'aplicada'"
-                           decoration-warning="estado in ('pendiente', 'revision_manual')"
-                           decoration-danger="estado == 'error'"/>
+                           decoration-info="estado == 'aplicada'"
+                           decoration-bf="estado == 'pendiente'"
+                           decoration-warning="estado in ('revision_manual', 'error')"/>
                 </header>
                 <sheet>
                     <group>
@@ -52,6 +56,8 @@
                         <group>
                             <field name="move_fantasma_id" readonly="1"/>
                             <field name="move_origen_id" readonly="1"/>
+                            <field name="candidatos" readonly="1"/>
+                            <field name="automatica" readonly="1"/>
                             <field name="company_id" readonly="1" groups="base.group_multi_company"/>
                         </group>
                     </group>
